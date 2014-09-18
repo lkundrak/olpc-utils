@@ -26,6 +26,26 @@ configure_hw_1_0() {
 	then
 	    /sbin/rfkill block wifi
 	fi
+
+	# When using external SD card slot for root filesystem, create
+	# and map a swap file, which the user may extend if they so
+	# wish.
+	file=/swapfile
+	size=64
+	bootpath=$(</proc/device-tree/chosen/bootpath)
+	case $bootpath in
+	    /pci/sd@c,1/disk@?:*) # root is on external sd card
+		if [ ! -e $file ]; then
+		    touch $file
+		fi
+		bytes=$(stat --format=%s $file)
+		if [ $bytes -lt $(( $size * 1024 * 1024 )) ]; then
+		    dd if=/dev/zero of=$file bs=1024k count=$size
+		fi
+		mkswap $file
+		swapon $file
+		;;
+	esac
 }
 
 configure_hw_1_5() {
