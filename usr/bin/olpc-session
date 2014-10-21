@@ -148,6 +148,10 @@ if [ -e "$HOME/.olpc-active-desktop" ]; then
 		desktop=gnome-session
 		install_switch_desktop_icon
 	fi
+	if [ "${active}" == "gnome-classic" ]; then
+		desktop="gnome-session --session gnome-classic"
+		install_switch_desktop_icon
+	fi
 fi
 
 # source custom user session, if present
