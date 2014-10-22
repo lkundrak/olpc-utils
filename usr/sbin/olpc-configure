@@ -70,7 +70,7 @@ configure_hw_1_75() {
 	# activities would then lower it to 0 again when they're done.
 	# it's not critical -- mainly it just keeps the storage LED from
 	# working properly while the ceiling is raised.
-	ols_device=$(grep -l 'OLPC OLS notify' /sys/class/input/input*/name)
+	ols_device=$(grep -l 'OLPC OLS notify' /sys/class/input/input*/name </dev/null)
 	ols_device=${ols_device%/name}
 	ceiling=$ols_device/device/ceiling
 	chmod a+w $ceiling
