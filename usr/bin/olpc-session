@@ -148,8 +148,8 @@ if [ -e "$HOME/.olpc-active-desktop" ]; then
 		desktop=gnome-session
 		install_switch_desktop_icon
 	fi
-	if [ "${active}" == "gnome-classic" ]; then
-		desktop="gnome-session --session gnome-classic"
+	if [ "${active}" == "mate" ]; then
+		desktop=mate-session
 		install_switch_desktop_icon
 	fi
 fi
