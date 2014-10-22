@@ -397,8 +397,10 @@ __EOF__
 		install_customization_packages
 	fi
 
-	# Set hostname via /etc/hosts and hostnamed
+	# Set hostname
 	# using MAC address in manufacturing data, with random number fallback
+	# via /etc/hosts and
+	# via /etc/hostname (because hostnamed is not yet up)
 	if ! [ -e /etc/hostname ]; then
 		local hname
 
@@ -412,7 +414,7 @@ __EOF__
 			hname=$(printf "xo-%02x-%02x-%02x\n" \
 				$(( $RANDOM % 255 )) $(( $RANDOM % 255 )) $(( $RANDOM % 255 )))
 		fi
-		hostnamectl set-hostname --static --transient "${hname}.localdomain"
+		echo "${hname}.localdomain" > /etc/hostname
 		sed -c -i -e "s/^127\.0\.0\.1.*/127.0.0.1 ${hname}.localdomain ${hname} localhost/g" /etc/hosts
 	fi
 }
