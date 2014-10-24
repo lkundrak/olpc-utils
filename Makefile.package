@@ -1,5 +1,5 @@
 
 PKGNAME     = olpc-utils
-COMPLETION  = 6.0.1
+COMPLETION  = 6.0.2
 SOURCES     = src usr etc $(wildcard Makefile*) COPYING TODO
 
