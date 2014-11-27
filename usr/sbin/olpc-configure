@@ -376,12 +376,6 @@ XKBLAYOUT="$XKBLAYOUT"
 XKBVARIANT="$XKBVARIANT"
 __EOF__
 
-        # now trigger udev again for XO-1.75 and XO-4 keyboards (#12811)
-        udevadm trigger \
-            --subsystem-match=input \
-            --type=devices \
-            --property-match="DEVTREE_COMPAT=olpc,xo*"
-
 	# First X layout used also as kernel keytable
 	KERN_KEYTABLE=`echo "$XKBLAYOUT" |  cut -d , -f 1`
 
