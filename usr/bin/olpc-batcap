@@ -2,7 +2,15 @@
 # Factory IQC script to measure battery capacity
 
 # Error if we try to use an undefined variable
-# set -u
+set -u
+
+
+# These are used by the logfile header
+PRGNAME="olpc-batcap"
+VERSION="0.4.7"
+
+echo -n "$PRGNAME Ver: $VERSION starting at "
+echo `date`
 
 if [ -e ./olpc-pwr-common ]; then
 	source "./olpc-pwr-common"
@@ -13,15 +21,47 @@ else
 	exit 1
 fi
 
+SYSSTAT_PID=0
+
+SKIP_PRE_CHARGE="false"
+
+until [ -z "${1:-}" ]
+do
+    if [ ${1:-0} = "skippre" ]; then
+        SKIP_PRE_CHARGE="true"
+    fi
+
+    shift
+done
+
 # Make sure that if we exit via ctrl-C that
 # charging gets turned back on.
 function cleanup
 {
+#	echo "cleanup, unblock wifi"
+#	sudo rfkill unblock wifi
 	enable_charging
+	killall gst-launch-0.10 > /dev/null
+	if [[ $SYSSTAT_PID -gt 0 ]]; then
+		sudo kill $SYSSTAT_PID
+	fi
 	exit
 }
 
-trap cleanup SIGINT
+trap cleanup SIGINT 0
+
+echo "Disabling powerd daemon"
+
+if [ -e /usr/bin/systemctl ]; then
+	sudo systemctl stop powerd.service
+else
+	sudo stop powerd
+fi
+
+# Turn off the wireless device.
+# Doesn't work on XO4 so don't use
+#echo "Powering off wireless"
+#sudo rfkill block wifi
 
 pwrlog_module_init
 
@@ -30,33 +70,46 @@ wait_for_battery
 echo "Reading battery info"
 pwrlog_battery_init
 
-# These are used by the logfile header
-PRGNAME="Batcap"
-VERSION="0.1.0"
+BATTERY_LOW_VOLT=5200000
+BATTERY_SAMPLE_FAST=6100000
+BATTERY_SAMPLE_FASTEST=5350000
 
-BATTERY_FULL_FLAG_DOWN=92
-BATTERY_LOW_VOL=5100000
+get_chemistry BATTERY_CHEM
 
-#disable powerd daemon
-POWERD_STATUS=` status powerd | awk '{print $2}' `
-echo "Powerd status : $POWERD_STATUS"
-if [[ "$POWERD_STATUS" != "stop/waiting" ]]; then
-    echo "Disable power daemon"
-    sudo stop powerd
+# If these are set just above the EC power off threshold
+# it makes things a bit cleaner than if the EC stops the
+# runin discharge and we have to detect it.
+if [[ "${BATTERY_CHEM}" == "Li-poly" ]]; then
+	echo "Li-Poly Chemistry detected"
+    BATTERY_LOW_VOLT=6160000
+    BATTERY_SAMPLE_FAST=6900000
+    BATTERY_SAMPLE_FASTEST=6190000
 fi
 
-echo
-echo "PRECHARGE"
-echo
+if [[ "${BATTERY_CHEM}" == "NiMH" ]]; then
+	echo "NiMH Chemistry detected"
+	BATTERY_LOW_VOLT=5200000
+fi
+
+if [[ $XO_VERSION == "1.5" ]]; then
+	BATTERY_LOW_VOLT=5650000
+	echo "XO-1.5 Low voltage thresh set to $BATTERY_LOW_VOLT"
+fi
+
+FDATE=`date "+%y%m%d-%H%M%S"`
+HOST=`hostname -s`
+LOGFILE="dis-$(get_battery_sernum)-$FDATE.csv"
+SYSSTAT_FILE="sar-$(get_battery_sernum)-$FDATE.bin"
+
+if [ -e /usr/lib/sa/sadc ]; then
+	sudo /usr/lib/sa/sadc 30 $SYSSTAT_FILE &
+	SYSSTAT_PID=$!
+fi
 
 # Make sure we aren't in discharge mode
 enable_charging
 # Allow the status to update
 sleep 1
-
-# when battery status is full, stop charging.
-# so capacity can be 93~100 when status is full
-# prevent this case, discharge to below 93
 
 get_sta BATTERY_STATUS
 if  [[ "${BATTERY_STATUS}" == "Discharging" ]]; then
@@ -70,87 +123,100 @@ if  [[ "${BATTERY_STATUS}" == "Discharging" ]]; then
    done
 fi
 
-# Want the backlight on max to help draw power.
-set_backlight_full
+if [ $SKIP_PRE_CHARGE != "true" ]; then
+    echo
+    echo "PRECHARGE"
+    echo
 
-PRE_BATTERY_SOC=0
-if [[ "${BATTERY_STATUS}" == "Full" ]]; then
-    get_soc BATTERY_SOC
-    if [[ ( ${BATTERY_SOC} -ne 100 ) ]]; then
-        echo "Battery FULL but not 100%"
-        echo "Discharge until capacity below $BATTERY_FULL_FLAG_DOWN %"
-        disable_charging
-        while true
-        do
-            get_soc BATTERY_SOC
-            if [[ ( ${BATTERY_SOC} -lt ${PRE_BATTERY_SOC} ) ]]; then
-                echo "Discharging : SOC : $BATTERY_SOC"
-            fi
-            if [[ ( ${BATTERY_SOC} -lt ${BATTERY_FULL_FLAG_DOWN} ) ]]; then
-                echo "Battery Capacity less then $BATTERY_FULL_FLAG_DOWN"
-                echo "Enable charging"
-                enable_charging
-		sleep 1
-                break
-            fi
-            PRE_BATTERY_SOC=$BATTERY_SOC
-        done
-    fi
+    echo "Topping off the battery"
+
+    # With (1.75) EC code > 0.4.02 and all XO-4 versions
+    # enterning into runin discharge mode
+    # will clear the battery full flag.
+    disable_charging
+    sleep 2
+    enable_charging
+    sleep 1
+
+    while true
+    do
+        get_soc BATTERY_SOC
+        get_sta BATTERY_STATUS
+        get_cur BATTERY_CUR
+        get_vol BATTERY_VOL
+        get_temp BATTERY_TEMP
+        VOLT_100s=$(( ${BATTERY_VOL}/10000 ))
+        VOLT_STR=$(format_hundreds_as_n.nn $VOLT_100s)
+        TEMP_STR=$(format_hundreds_as_n.nn $BATTERY_TEMP)
+
+        echo "Precharge: SOC: ${BATTERY_SOC}, $(( ${BATTERY_CUR}/1000 )) mA,  ${VOLT_STR} V, ${TEMP_STR} degC "
+
+        if [[ ${BATTERY_STATUS} == "Full" ]]; then
+        echo "Battery status: ${BATTERY_STATUS}"
+        break
+        fi
+        sleep 5
+    done
+
+    # Accuracy of the sensor is +/- 2 degC.  I'd like to have this number lower but I found
+    # testing at the OLPC office that many of the batteries can sit for very long periods
+    # waiting for the temp to decrease. (Office temp 25-30 deg C)
+    # TODO: Change this to an adaptive scheme. So it will work regardless of the ambient
+    # temp
+
+    COOLING_TEMP=3080
+
+    echo "Waiting for battery to cool below $(format_hundreds_as_n.nn $COOLING_TEMP) C"
+    get_temp BATTERY_TEMP
+    echo "Start temp: $(format_hundreds_as_n.nn $BATTERY_TEMP) C"
+    START_TIME=$(get_seconds)
+    while true
+    do
+        get_temp BATTERY_TEMP
+        # Only show the updated on the screen not in the logs
+        printf "Temperature: $(format_hundreds_as_n.nn $BATTERY_TEMP) C seconds: $(( $(get_seconds) - $START_TIME )) \r" >&2
+        if [[ ${BATTERY_TEMP} -lt ${COOLING_TEMP} ]] ; then
+        echo
+            echo "Battery cooled to $(format_hundreds_as_n.nn $BATTERY_TEMP) C"
+            break
+        fi
+        sleep 1
+    done
+    echo "Cooling took $(( $(get_seconds) - $START_TIME )) seconds"
+
+else
+    echo "Skipping pre-charge and cooling phases"
 fi
 
-PRE_BATTERY_SOC=0
-
-while true
-do
-    get_soc BATTERY_SOC
-    get_sta BATTERY_STATUS
-    get_cur BATTERY_CUR
-    if [[ ${BATTERY_SOC} -gt ${PRE_BATTERY_SOC} ]]; then
-	echo "Charging : SOC : ${BATTERY_SOC} : Current : $(( ${BATTERY_CUR}/1000 )) mA "
-    fi
-
-    if [[ ${BATTERY_STATUS} == "Full" ]]; then
-	echo "Battery status: ${BATTERY_STATUS}"
-	break
-    fi
-    PRE_BATTERY_SOC=$BATTERY_SOC
-    sleep 1
-done
-
-
-echo "Waiting for battery to cool below 28"
-get_temp BATTERY_TEMP
-echo "Start temp: $(format_hundreds_as_n.nn $BATTERY_TEMP) C"
-while true
-do
-    get_temp BATTERY_TEMP
-    # Only show the updated on the screen not in the logs
-    printf "Battery temperature: $(format_hundreds_as_n.nn $BATTERY_TEMP) C\r" >&2
-    if [[ ${BATTERY_TEMP} -lt 2800 ]] ; then
-	echo
-        echo "Battery cooled to $(format_hundreds_as_n.nn $BATTERY_TEMP) C"
-        break
-    fi
-    sleep 1
-done
 
 echo
 echo "DISCHARGE"
 echo
 
-FDATE=`date "+%y%m%d-%H%M%S"`
-HOST=`hostname -s`
-LOGFILE="dis-$DS_SERNUM-$FDATE.csv"
 pwrlog_write_header
 
-# The following processes in runin discharge represents between
-# a .29C to .36C discharge rate depending on the battery voltage
+set_backlight_full
 
-amixer set Speaker 100% unmute /dev/null
-amixer set Master 83% unmute > /dev/null
-gst-launch audiotestsrc volume=1 freq=100 ! audioconvert ! alsasink > /dev/null 2>&1 &
+# Set the discharge current by running a few other tasks.
+# The current draw can be changed by changing the master volume
+# level.
+# For 1.75 83% works out to ~850mA and 70% is ~700mA.
+# For 4.0  61% works out to ~850mA. (Assuming only 1 core operational)
+#  changed to 74% -pgf
+
+if [[ $XO_VERSION == "4" ]]; then
+	amixer set Master 74% unmute > /dev/null
+else
+	amixer set Speaker 100% unmute > /dev/null
+	amixer set Master 83% unmute > /dev/null
+fi
+
+gst-launch audiotestsrc volume=1 freq=100 ! audio/x-raw-int, width=16, channels=2 ! alsasink > /dev/null 2>&1 &
 AUDIO_PID=$!
-sh /runin/runin-camera > /dev/null 2>&1 &
+# Give audio maximum prioity so it does not skip.
+sudo chrt -p 99 $AUDIO_PID
+
+bash /runin/runin-camera > /dev/null 2>&1 &
 CAMERA_PID=$!
 
 init_readings
@@ -159,6 +225,8 @@ log_reading
 
 disable_charging
 
+dloop=0
+
 while true
 do
     take_reading
@@ -166,24 +234,35 @@ do
     VOLT_100s=$(( ${VOLT}/10000 ))
     VOLT_STR=$(format_hundreds_as_n.nn $VOLT_100s)
     get_cur BATTERY_CUR
-    printf "Discharge: SOC: %d %%, Consumption : %d mAh, Voltage : %s V, Current %d mA\n"  $CAPLEVEL $MAh_NET $VOLT_STR $(( ${BATTERY_CUR}/1000 ))
+    get_temp BATTERY_TEMP
+    TEMP_STR=$(format_hundreds_as_n.nn $BATTERY_TEMP)
+    printf "Discharge: SOC: %d %%, %4d mAh, %s V, %4d mA, %s degC\n"  $CAPLEVEL $MAh_NET $VOLT_STR $(( ${BATTERY_CUR}/1000 )) $TEMP_STR
 
-    if [[ ( $VOLT -le ${BATTERY_LOW_VOL} ) ]]; then
+    if [[ ( $VOLT -le ${BATTERY_LOW_VOLT} ) ]]; then
        echo "Low voltage threshold reached. Test Complete."
        break
     fi
 
-    if [[ (${VOLT} -le 5300000) && (${VOLT} -ge 5200000) ]]; then
+    if [[ ${BATTERY_CUR} -gt 0 && $dloop -gt 1 ]]; then
+	echo "EC canceled discharge. Test Complete "
+	break
+    fi
+
+    if [[ ( ${VOLT} -le ${BATTERY_SAMPLE_FAST} ) && ( ${VOLT} -ge ${BATTERY_SAMPLE_FASTEST} ) ]]; then
         sleep 5
-    elif [[ ( ${VOLT} -le 5200000 ) ]]; then
+    elif [[ ( ${VOLT} -le ${BATTERY_SAMPLE_FASTEST} ) ]]; then
 	sleep 1
     else
         sleep 20
     fi
+
+    sync
+    dloop=$(($dloop+1))
+
 done
 
 FDATE=`date "+%y%m%d-%H%M%S"`
-LOGFILE="chg-$DS_SERNUM-$FDATE.csv"
+LOGFILE="chg-$(get_battery_sernum)-$FDATE.csv"
 pwrlog_write_header
 init_readings
 take_reading
@@ -198,8 +277,11 @@ enable_charging
 
 # No point in using lots of extra power while charging
 # Stop the loading apps.
+echo "killing camera $CAMERA_PID"
 kill $CAMERA_PID > /dev/null
+echo "killing audio $AUDIO_PID"
 kill $AUDIO_PID > /dev/null
+echo "killing any gst-launch-0.10"
 killall gst-launch-0.10 > /dev/null
 
 while true
@@ -207,10 +289,11 @@ do
     take_reading
     log_reading
     VOLT_100s=$(( ${VOLT}/10000 ))
-    VOLT_INT=$(( ${VOLT_100s}/100 ))
-    VOLT_FRAC=$(( ${VOLT_100s} - ( ${VOLT_INT}*100 ) ))
+    VOLT_STR=$(format_hundreds_as_n.nn $VOLT_100s)
     get_cur BATTERY_CUR
-    printf "SOC: %d %%, Net mAh: %d , Voltage : %d.%02d V, Current %d mA\n"  $CAPLEVEL $MAh_NET $VOLT_INT $VOLT_FRAC $(( ${BATTERY_CUR}/1000 ))
+    get_temp BATTERY_TEMP
+    TEMP_STR=$(format_hundreds_as_n.nn $BATTERY_TEMP)
+    printf "Charge: SOC: %d %%, %4d mAh, %s V, %4d mA, %s degC\n"  $CAPLEVEL $MAh_NET $VOLT_STR $(( ${BATTERY_CUR}/1000 )) $TEMP_STR
 
     if [[ ${STAT} == "Full" ]]; then
         echo "Charge complete. Exiting"
@@ -220,3 +303,5 @@ do
     sleep 20
 done
 
+echo -n "$PRGNAME ending at "
+echo `date`
