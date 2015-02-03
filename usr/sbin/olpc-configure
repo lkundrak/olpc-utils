@@ -341,8 +341,12 @@ configure_xorg() {
 		# We race with powerd startup so mkdir
 		mkdir -p /run/powerd-inhibit-suspend
 		touch /run/powerd-inhibit-suspend/1
-	elif [ ! -e "$xo_x_config" ]; then
-		ln -s /usr/share/olpc-utils/xorg.conf.d/xo$XO_VERSION.conf /etc/X11/xorg.conf.d/
+	else
+		SUFFIX=
+		if [ -e /usr/lib/xorg/modules/drivers/vivante_drv.so ]; then
+			SUFFIX=-vivante
+		fi
+		ln -sf /usr/share/olpc-utils/xorg.conf.d/xo$XO_VERSION$SUFFIX.conf /etc/X11/xorg.conf.d/xo$XO_VERSION.conf
 	fi
 }
 
