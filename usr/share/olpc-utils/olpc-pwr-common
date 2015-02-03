@@ -12,19 +12,17 @@ function pwrlog_module_init
 	    if [[ -e $x/mfg-data ]]; then OFW=$x; break; fi
 	done
 
-	ec_cmds=/sys/power/ec
-	if [[ ! -e $ec_cmds ]]; then
-		if [[ ! -e /sys/kernel/debug ]]; then
-			sudo mount -t debugfs none /sys/kernel/debug
-		fi
-
-		ec_cmds=/sys/kernel/debug/olpc-ec/cmd
-		if [[ ! -e $ec_cmds ]]; then
-			ec_cmds=/sys/kernel/debug/olpc-ec/generic
-			if [[ ! -e $ec_cmds ]]; then
-				echo "Missing kernel support for embedded controller commands"
-			fi
-		fi
+        sudo mount -t debugfs none /sys/kernel/debug &> /dev/null
+	ec_cmds=
+	for x in /sys/kernel/debug/olpc-ec/{cmd,generic} /sys/power/ec; do
+	    if [[ -e $x ]]; then
+		ec_cmds=$x
+		break
+	    fi
+	done
+	if [[ -z $ec_cmds ]]; then
+	    echo "COVERAGE: missing kernel support for embedded controller commands (#10933)"
+	    exit 3
 	fi
 
 	if [ -e /usr/share/olpc-utils/olpc-utils-functions ]; then
@@ -115,7 +113,7 @@ function ec_set_wakup_mask()
 	if [[ $XO_VERSION = "1" ]]; then
 		return
 	elif [[ $XO_VERSION = "1.5" ]]; then
-		printf "1b:0 b9 \n"  > $ec_cmds
+		printf "1b:0 b9 \n"  | sudo tee -a $ec_cmds > /dev/null
 	elif [[ $XO_VERSION = "1.75" ]]; then
 		printf "38:0 60 00 \n" > $ec_cmds
 	fi
@@ -132,10 +130,10 @@ function ec_get_Vin()
 	if [[ $XO_VERSION = "1" ]]; then
 		echo "0"
 		return
+	elif [[ $XO_VERSION = "1.5" ]]; then
+		printf "42:1 \n" | sudo tee -a $ec_cmds > /dev/null
 	elif [[ $XO_VERSION = "1.75" ]]; then
 		printf "5c:2 \n" > $ec_cmds
-	else
-		printf "42:1 \n" > $ec_cmds
 	fi
 	printf "%s %s" $(< $ec_cmds )
 }
@@ -148,6 +146,15 @@ function wait_for_battery()
 	done
 }
 
+function get_battery_sernum()
+{
+	if [[ $(< $B_INFO/present ) = 1 ]]; then
+		DS_SERNUM=$(< $B_INFO/serial_number )
+	else
+		DS_SERNUM=""
+	fi
+	echo $DS_SERNUM
+}
 
 # Interesting battery info
 function pwrlog_battery_init()
@@ -184,7 +191,7 @@ function pwrlog_battery_init()
 	ACR_PROP="charge_counter"
 	if [ ! -e $B_INFO/$ACR_PROP ]
 	then
-		ACR_PROP="accum_current"
+        	ACR_PROP="accum_current"
 	fi
 }
 
@@ -322,6 +329,13 @@ get_cur() {
     eval "$1=$(< $B_INFO/current_avg)"
 }
 
+get_extpwr() {
+    eval "$1=$(< /sys/class/power_supply/olpc-ac/online)"
+}
+
+get_chemistry() {
+    eval "$1=$(< $B_INFO/technology)"
+}
 
 function take_reading
 {
@@ -352,7 +366,7 @@ function take_reading
 	MAs_DIFF=$(( $MAh_DIFF * 3600 ))
 	NET_MINUTES=$(( ( ${THIS_SEC} - ${START_TIME} ) / 60 ))
 	VIN=$(ec_get_Vin)
-	W_SAMPLE=$(( ((${MAs_DIFF}/${SECS}) * ((${VOLT}+500)/1000)) / 1000 ))
+	W_SAMPLE=$(( ((${MAs_DIFF}/${SECS}) * ((${VOLT}+500)/1000) ) / 1000 ))
 
 }
 
@@ -387,9 +401,9 @@ function set_backlight()
 	# Make sure the backlight is on full
 	BRIGHTNESS=/sys/class/backlight/dcon-bl/brightness
 	if [[ -e ${BRIGHTNESS} ]]; then
-		sudo sh -c "echo $1 > ${BRIGHTNESS}"
+    		sudo sh -c "echo $1 > ${BRIGHTNESS}"
 	else
-		echo "COVERAGE: missing kernel support for backlight control (#10932)"
+    		echo "COVERAGE: missing kernel support for backlight control (#10932)"
 	fi
 }
 
@@ -398,9 +412,33 @@ function set_backlight_full()
 	set_backlight 15
 }
 
+function save_backlight()
+{
+    BL_BRIGHTNESS_SAVE=$(< /sys/class/backlight/dcon-bl/actual_brightness)
+}
+
+function restore_backlight()
+{
+    if [[ ! -z $BL_BRIGHTNESS_SAVE ]]; then
+	set_backlight $BL_BRIGHTNESS_SAVE
+    fi
+}
+
+function set_backlight_off()
+{
+    set_backlight 0
+}
+
 function format_hundreds_as_n.nn
 {
     local INTV=$(( ${1} / 100 ))
-    local FRACV=$(( ${1} - ( ${INTV}*100 ) ))
-    printf "%d.%02d" ${INTV} ${FRACV}
+    local FRACV=$(( ${1} % 100 ))
+    if [ ${FRACV} -lt 0 ]; then
+	let "FRACV = $(( 0 - ${FRACV} ))"
+    fi
+    if [[ (${1} -lt 0) && (${INTV} -eq 0) ]]; then
+	printf "%c%d.%02d" "-" ${INTV} ${FRACV}
+    else
+	printf "%d.%02d" ${INTV} ${FRACV}
+    fi
 }
