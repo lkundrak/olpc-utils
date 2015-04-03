@@ -10,7 +10,7 @@ XO_VERSION=0
 
 source /usr/share/olpc-utils/olpc-utils-functions
 
-configure_hw_1_0() {
+configure_hw_1() {
 	# load alsa configuration here since doing it at module load time wasn't working
 	/usr/sbin/alsactl restore
 
@@ -27,23 +27,27 @@ configure_hw_1_0() {
 	    /sbin/rfkill block wifi
 	fi
 
-	# When using external SD card slot for root filesystem, create
-	# and map a swap file, which the user may extend if they so
-	# wish.
-	file=/swapfile
+	# Create and map a swap file, which the user may extend if
+	# they so wish.
+	file=/var/swap
 	size=64
 	bootpath=$(</proc/device-tree/chosen/bootpath)
+	if [[ ! -e $file ]]; then
+	    touch $file
+	fi
+	bytes=$(stat --format=%s $file)
+	if [[ $bytes -lt $(( $size * 1024 * 1024 )) ]]; then
+	    dd if=/dev/zero of=$file bs=1024k count=$size
+	fi
 	case $bootpath in
 	    /pci/sd@c,1/disk@?:*) # root is on external sd card
-		if [ ! -e $file ]; then
-		    touch $file
-		fi
-		bytes=$(stat --format=%s $file)
-		if [ $bytes -lt $(( $size * 1024 * 1024 )) ]; then
-		    dd if=/dev/zero of=$file bs=1024k count=$size
-		fi
 		mkswap $file
 		swapon $file
+		;;
+	    /pci/nandflash*) # root is on nand flash
+		loop=$(losetup --show --find $file)
+		mkswap $loop
+		swapon $loop
 		;;
 	esac
 }
@@ -92,7 +96,7 @@ configure_hw() {
 	elif [ "${XO_VERSION}" == "4" ] ; then
 		configure_hw_4
 	else
-		configure_hw_1_0
+		configure_hw_1
 	fi
 }
 
