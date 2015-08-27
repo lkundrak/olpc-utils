@@ -67,6 +67,11 @@ configure_hw_1_5() {
 }
 
 configure_hw_1_75() {
+	amixer -q sset Master -- "-10.0dB"
+	amixer -q sset "DC Input Bias" mute
+	amixer -q sset "DC Mode Enable" mute
+	amixer -q sset 'Analog Mic Boost' '62%'
+	amixer -q sset 'Capture' '100%' cap
 
 	# open permissions on the OLS 'ceiling' node, so activities
 	# that want to get light sensor readings can raise it.
