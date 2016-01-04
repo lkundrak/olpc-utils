@@ -117,6 +117,7 @@ read_config() {
 	XKBMODEL="olpc"
 	XKBLAYOUT="us"
 	SYS_LANG="en_US.UTF-8"
+	XKBOPTIONS=""
 
 	[ "${XO_VERSION}" == "0" ] && return
 
@@ -190,6 +191,9 @@ read_config() {
 	    echo "olpc-configure: Locale $SYS_LANG is not supported;"
 	    SYS_LANG="en_US.UTF-8"  # better fallback than "C"
 	    echo "olpc-configure: Falling back to locale $SYS_LANG"
+	fi
+	if [ "$XKBMODEL" = "olpcm" ]; then
+	    XKBOPTIONS="grp:shifts_toggle"
 	fi
 }
 
@@ -383,6 +387,7 @@ configure_root() {
 XKBMODEL="$XKBMODEL"
 XKBLAYOUT="$XKBLAYOUT"
 XKBVARIANT="$XKBVARIANT"
+XKBOPTIONS="$XKBOPTIONS"
 __EOF__
 
 	# First X layout used also as kernel keytable
