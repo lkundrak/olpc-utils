@@ -347,6 +347,8 @@ configure_xorg() {
 	done
 
 	local xo_x_config=/etc/X11/xorg.conf.d/xo$XO_VERSION.conf
+	local driver=$(basename $(realpath /sys/class/graphics/fb0/device/driver))
+
 	if [ $USBVGAFOUND = 'true' ]; then
 		rm -f $xo_x_config
 		# Inhibit suspend with a long-lived PID
@@ -354,8 +356,21 @@ configure_xorg() {
 		# We race with powerd startup so mkdir
 		mkdir -p /run/powerd-inhibit-suspend
 		touch /run/powerd-inhibit-suspend/1
-	elif [ ! -e "$xo_x_config" ]; then
-		ln -s /usr/share/olpc-utils/xorg.conf.d/xo$XO_VERSION.conf /etc/X11/xorg.conf.d/
+	else
+		case "$driver" in
+			gx1fb|gxfb|lxfb)
+				ln -sf /usr/share/olpc-utils/xorg.conf.d/amd.conf $xo_x_config
+				;;
+			viafb)
+				ln -sf /usr/share/olpc-utils/xorg.conf.d/chrome.conf $xo_x_config
+				;;
+			pxa168fb)
+				ln -sf /usr/share/olpc-utils/xorg.conf.d/dovefb.conf $xo_x_config
+				;;
+			*)
+				rm -f $xo_x_config
+				;;
+		esac
 	fi
 }
 
