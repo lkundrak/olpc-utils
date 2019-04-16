@@ -347,6 +347,8 @@ configure_xorg() {
 	done
 
 	local xo_x_config=/etc/X11/xorg.conf.d/xo$XO_VERSION.conf
+	local driver=$(basename $(realpath /sys/class/graphics/fb0/device/driver))
+
 	if [ $USBVGAFOUND = 'true' ]; then
 		rm -f $xo_x_config
 		# Inhibit suspend with a long-lived PID
@@ -355,11 +357,24 @@ configure_xorg() {
 		mkdir -p /run/powerd-inhibit-suspend
 		touch /run/powerd-inhibit-suspend/1
 	else
-		SUFFIX=
-		if [ -e /usr/lib/xorg/modules/drivers/vivante_drv.so ]; then
-			SUFFIX=-vivante
-		fi
-		ln -sf /usr/share/olpc-utils/xorg.conf.d/xo$XO_VERSION$SUFFIX.conf /etc/X11/xorg.conf.d/xo$XO_VERSION.conf
+		case "$driver" in
+			gx1fb|gxfb|lxfb)
+				ln -sf /usr/share/olpc-utils/xorg.conf.d/amd.conf $xo_x_config
+				;;
+			viafb)
+				ln -sf /usr/share/olpc-utils/xorg.conf.d/chrome.conf $xo_x_config
+				;;
+			pxa168fb)
+				if [ -e /usr/lib/xorg/modules/drivers/vivante_drv.so ]; then
+					ln -sf /usr/share/olpc-utils/xorg.conf.d/vivante.conf $xo_x_config
+				else
+					ln -sf /usr/share/olpc-utils/xorg.conf.d/dovefb.conf $xo_x_config
+				fi
+				;;
+			*)
+				rm -f $xo_x_config
+				;;
+		esac
 	fi
 }
 
