@@ -367,6 +367,9 @@ configure_xorg() {
 			pxa168fb)
 				ln -sf /usr/share/olpc-utils/xorg.conf.d/dovefb.conf $xo_x_config
 				;;
+			simple-framebuffer)
+				ln -s /usr/share/olpc-utils/xorg.conf.d/fbdev.conf $xo_x_config
+				;;
 			*)
 				rm -f $xo_x_config
 				;;
