@@ -371,6 +371,9 @@ configure_xorg() {
 					ln -sf /usr/share/olpc-utils/xorg.conf.d/dovefb.conf $xo_x_config
 				fi
 				;;
+			simple-framebuffer)
+				ln -s /usr/share/olpc-utils/xorg.conf.d/fbdev.conf $xo_x_config
+				;;
 			*)
 				rm -f $xo_x_config
 				;;
